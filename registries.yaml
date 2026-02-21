@@ -1,0 +1,4 @@
+mirrors:
+  "mandala-registry:5000":
+    endpoint:
+      - "http://mandala-registry:5000"

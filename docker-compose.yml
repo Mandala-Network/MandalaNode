@@ -1,0 +1,117 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mandala-mysql
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    ports:
+      - "3306:3306" # No need to open this up in production, only here for development.
+    volumes:
+      - ./local-data/mysql_data:/var/lib/mysql
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  mandala-node:
+    build: .
+    container_name: mandala-node
+    ports:
+      - "7777:7777"
+    extra_hosts:
+      - "prometheus.localhost:host-gateway"
+    environment:
+      MANDALA_NODE_PORT: ${MANDALA_NODE_PORT}
+      MAINNET_PRIVATE_KEY: ${MAINNET_PRIVATE_KEY}
+      TESTNET_PRIVATE_KEY: ${TESTNET_PRIVATE_KEY}
+      TAAL_API_KEY_MAIN: ${TAAL_API_KEY_MAIN}
+      TAAL_API_KEY_TEST: ${TAAL_API_KEY_TEST}
+      MANDALA_NODE_SERVER_BASEURL: ${MANDALA_NODE_SERVER_BASEURL}
+      MYSQL_DATABASE_URL: "mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}"
+      LOG_LEVEL: "info"
+      K3S_TOKEN: ${K3S_TOKEN}
+      KUBECONFIG: ${KUBECONFIG_FILE_PATH}
+      DOCKER_HOST: ${DOCKER_HOST}
+      DOCKER_REGISTRY: ${DOCKER_REGISTRY}
+      PROJECT_DEPLOYMENT_DNS_NAME: ${PROJECT_DEPLOYMENT_DNS_NAME} # Where will projects be deployed online?
+      CERT_ISSUANCE_EMAIL: ${CERT_ISSUANCE_EMAIL}
+      PROMETHEUS_URL: ${PROMETHEUS_URL}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      SYSTEM_FROM_EMAIL: ${SYSTEM_FROM_EMAIL}
+    depends_on:
+      - mysql
+    volumes:
+      - ./src:/app/src
+      - ./local-data/kubeconfig:/kubeconfig
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    command:
+      - "/wait-for-services.sh"
+      - "mandala-mysql"
+      - "3306"
+      - "mandala-k3s"
+      - "6443"
+      - "npm"
+      - "run"
+      - "start:dev"
+
+  k3s-server:
+    image: rancher/k3s:latest
+    container_name: mandala-k3s
+    privileged: true
+    tmpfs:
+      - /run
+      - /var/run
+    ulimits:
+      nproc: 1048576
+      nofile:
+        soft: 1048576
+        hard: 1048576
+    command:
+      - server
+      - "--tls-san=mandala-k3s"
+      - "--node-name=mandala-k3s"
+      - "--kubelet-arg=config=/etc/rancher/k3s/kubelet-config.yaml"
+    restart: always
+    environment:
+      K3S_KUBECONFIG_OUTPUT: /output/kubeconfig.yaml
+      K3S_KUBECONFIG_MODE: "666"
+      K3S_TOKEN: ${K3S_TOKEN}
+    volumes:
+      - k3s-server:/var/lib/rancher/k3s
+      - ./local-data/kubeconfig:/output
+      - ./registries.yaml:/etc/rancher/k3s/registries.yaml:ro
+      - ./kubelet-config.yaml:/etc/rancher/k3s/kubelet-config.yaml
+    ports:
+      - "6080:80"
+      - "6443:443"
+
+  registry:
+    image: registry:2
+    container_name: mandala-registry
+    volumes:
+      - ./local-data/registry:/var/lib/registry
+
+  dind:
+    image: docker:20-dind
+    container_name: mandala-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: [ "--insecure-registry=mandala-registry:5000" ]
+    volumes:
+      - dind-storage:/var/lib/docker
+    ulimits:
+      nofile:
+        soft: 1048576
+        hard: 1048576
+
+volumes:
+  k3s-server: {}
+  dind-storage: {}
