@@ -238,3 +238,5 @@ $RECYCLE.BIN/
 
 ## CUSTOM
 local-data
+
+package-lock.json
