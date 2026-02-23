@@ -43,6 +43,9 @@ services:
       PROMETHEUS_URL: ${PROMETHEUS_URL}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY}
       SYSTEM_FROM_EMAIL: ${SYSTEM_FROM_EMAIL}
+      GPU_ENABLED: ${GPU_ENABLED:-false}
+      GPU_RATE_PER_UNIT_5MIN: ${GPU_RATE_PER_UNIT_5MIN:-5000}
+      GPU_TYPE: ${GPU_TYPE:-}
     depends_on:
       - mysql
     volumes:

@@ -22,7 +22,58 @@ export interface AgentManifest {
   frontend?: { directory?: string; image?: string }
   storage?: { enabled: boolean; size?: string; mountPath?: string }
   databases?: { mysql?: boolean; mongo?: boolean; redis?: boolean }
-  deployments?: Array<{ provider: 'mandala'; projectID?: string; network?: string }>
+  deployments?: Array<{ provider: 'mandala'; projectID?: string; network?: string; MandalaCloudURL?: string }>
+}
+
+// ---------- V2 Manifest Types ----------
+
+export interface ServiceDefinition {
+  agent: {
+    type: 'openclaw' | 'agidentity' | 'custom';
+    image?: string;
+    dockerfile?: string;
+    buildContext?: string;
+    runtime?: 'node' | 'python' | 'docker';
+  };
+  env?: Record<string, string>;
+  resources?: { cpu?: string; memory?: string; gpu?: string };
+  ports?: number[];
+  healthCheck?: { path: string; port?: number; intervalSeconds?: number };
+  frontend?: { directory?: string; image?: string } | null;
+  storage?: { enabled: boolean; size?: string; mountPath?: string };
+  databases?: { mysql?: boolean; mongo?: boolean; redis?: boolean };
+  provider?: string;
+}
+
+export interface ServiceLink {
+  from: string;
+  to: string;
+  envVar: string;
+}
+
+export interface DeploymentTarget {
+  name: string;
+  provider: 'mandala';
+  MandalaCloudURL: string;
+  projectID?: string;
+  network?: string;
+  capabilities?: {
+    gpu?: boolean;
+    gpuType?: string;
+  };
+}
+
+export interface AgentManifestV2 {
+  schema: 'mandala-agent';
+  schemaVersion: '2.0';
+  services: Record<string, ServiceDefinition>;
+  links?: ServiceLink[];
+  env?: Record<string, string>;
+  deployments?: DeploymentTarget[];
+}
+
+export function isV2Manifest(m: any): m is AgentManifestV2 {
+  return m?.schemaVersion === '2.0' && m?.services != null;
 }
 
 /**

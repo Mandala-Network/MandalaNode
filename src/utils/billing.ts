@@ -3,12 +3,15 @@ import { sendThresholdEmail } from './email';
 import axios from 'axios';
 import db from '../db';
 import { disableIngress, enableIngress } from './ingress';
+import { refreshAdvertisement } from './registry';
 
 // Configurable billing rates (default values as before)
 const CPU_RATE_PER_CORE_5MIN = parseInt(process.env.CPU_RATE_PER_CORE_5MIN || "1000", 10);
 const MEM_RATE_PER_GB_5MIN = parseInt(process.env.MEM_RATE_PER_GB_5MIN || "500", 10);
 const DISK_RATE_PER_GB_5MIN = parseInt(process.env.DISK_RATE_PER_GB_5MIN || "10", 10);
 const NET_RATE_PER_GB_5MIN = parseInt(process.env.NET_RATE_PER_GB_5MIN || "200", 10);
+const GPU_RATE_PER_UNIT_5MIN = parseInt(process.env.GPU_RATE_PER_UNIT_5MIN || "5000", 10);
+const GPU_ENABLED = process.env.GPU_ENABLED === 'true';
 
 // Prometheus URL
 const PROMETHEUS_URL = process.env.PROMETHEUS_URL || 'http://prometheus-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090';
@@ -83,6 +86,17 @@ export async function billProjects() {
                 diskBytes = 0;
             }
 
+            // GPU allocated units (only query when GPU is enabled on this node)
+            let gpuUnits = 0;
+            if (GPU_ENABLED) {
+                try {
+                    const gpuQuery = `sum(kube_pod_container_resource_requests{namespace="${namespace}", resource="nvidia_com_gpu"})`;
+                    gpuUnits = await queryPrometheus(gpuQuery);
+                } catch (err) {
+                    gpuUnits = 0;
+                }
+            }
+
             // Convert to GB
             const memGB = memoryBytes / (1024 * 1024 * 1024);
             const diskGB = diskBytes / (1024 * 1024 * 1024);
@@ -95,8 +109,9 @@ export async function billProjects() {
             const memCost = Math.ceil(memGB * MEM_RATE_PER_GB_5MIN);
             const diskCost = Math.ceil(diskGB * DISK_RATE_PER_GB_5MIN);
             const netCost = Math.ceil(netGB * NET_RATE_PER_GB_5MIN);
+            const gpuCost = GPU_ENABLED ? Math.ceil(gpuUnits * GPU_RATE_PER_UNIT_5MIN) : 0;
 
-            const totalCost = cpuCost + memCost + diskCost + netCost;
+            const totalCost = cpuCost + memCost + diskCost + netCost + gpuCost;
 
             if (totalCost > 0) {
                 const newBalance = oldBalance - totalCost;
@@ -108,11 +123,13 @@ export async function billProjects() {
                     memCost,
                     diskCost,
                     netCost,
+                    gpuCost,
                     rates: {
                         CPU_RATE_PER_CORE_5MIN,
                         MEM_RATE_PER_GB_5MIN,
                         DISK_RATE_PER_GB_5MIN,
-                        NET_RATE_PER_GB_5MIN
+                        NET_RATE_PER_GB_5MIN,
+                        GPU_RATE_PER_UNIT_5MIN
                     }
                 };
 
@@ -126,9 +143,9 @@ export async function billProjects() {
 
                 await db('logs').insert({
                     project_id: project.id,
-                    message: `Billed ${totalCost} sat (CPU:${cpuCost}, MEM:${memCost}, DISK:${diskCost}, NET:${netCost}) for last 5m. New balance: ${newBalance}`
+                    message: `Billed ${totalCost} sat (CPU:${cpuCost}, MEM:${memCost}, DISK:${diskCost}, NET:${netCost}, GPU:${gpuCost}) for last 5m. New balance: ${newBalance}`
                 });
-                logger.info({ project_uuid: project.project_uuid }, `Billed ${totalCost} sat for project (CPU:${cpuCost}, MEM:${memCost}, DISK:${diskCost}, NET:${netCost}). New balance: ${newBalance}`);
+                logger.info({ project_uuid: project.project_uuid }, `Billed ${totalCost} sat for project (CPU:${cpuCost}, MEM:${memCost}, DISK:${diskCost}, NET:${netCost}, GPU:${gpuCost}). New balance: ${newBalance}`);
 
                 // Check thresholds
                 const notifiedThresholds = [];
@@ -161,6 +178,9 @@ export async function billProjects() {
                     //     message: `Ingress disabled due to negative balance (${newBalance})`
                     // });
                     // logger.info({ project_uuid: project.project_uuid }, 'Ingress disabled due to negative balance');
+
+                    // When ingress is disabled and pods scaled down, resources are freed
+                    await refreshAdvertisement();
                 }
             }
 

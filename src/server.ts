@@ -11,6 +11,7 @@ import { initCluster } from './init-cluster';
 import { startCronJobs } from './cron';
 import timeout from 'connect-timeout';
 import { makeWallet } from './utils/wallet';
+import { initRegistry } from './utils/registry';
 
 const port = parseInt(process.env.MANDALA_NODE_PORT || '7777', 10);
 const MAINNET_PRIVATE_KEY = process.env.MAINNET_PRIVATE_KEY;
@@ -41,6 +42,10 @@ async function main() {
     if (INIT_K3S) {
         await initCluster();
     }
+
+    // Initialize the registry module with the mainnet wallet for overlay advertisements
+    initRegistry(mainnetWallet);
+
     startCronJobs(db, mainnetWallet, testnetWallet);
 
     const app = express();

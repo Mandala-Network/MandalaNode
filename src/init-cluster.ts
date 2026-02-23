@@ -143,4 +143,47 @@ spec:
     } catch (e) {
         logger.error(e, 'Failed to apply Prometheus ingress');
     }
+
+    // Conditionally install NVIDIA GPU infrastructure
+    if (process.env.GPU_ENABLED === 'true') {
+        logger.info('GPU_ENABLED=true — installing NVIDIA GPU infrastructure...');
+
+        // Install NVIDIA Device Plugin (makes K8s aware of nvidia.com/gpu resources)
+        try {
+            execSync('helm repo add nvdp https://nvidia.github.io/k8s-device-plugin', { stdio: 'inherit' });
+            execSync('helm repo update', { stdio: 'inherit' });
+            execSync('helm upgrade --install nvidia-device-plugin nvdp/nvidia-device-plugin --namespace nvidia-device-plugin --create-namespace', { stdio: 'inherit' });
+            logger.info('NVIDIA device plugin installed.');
+        } catch (e) {
+            logger.error(e, 'Failed to install NVIDIA device plugin');
+        }
+
+        // Install DCGM Exporter (GPU metrics for Prometheus)
+        try {
+            execSync('helm repo add gpu-helm-charts https://nvidia.github.io/dcgm-exporter/helm-charts', { stdio: 'inherit' });
+            execSync('helm repo update', { stdio: 'inherit' });
+            execSync('helm upgrade --install dcgm-exporter gpu-helm-charts/dcgm-exporter --namespace monitoring --create-namespace --set serviceMonitor.enabled=true', { stdio: 'inherit' });
+            logger.info('DCGM exporter installed with ServiceMonitor enabled.');
+        } catch (e) {
+            logger.error(e, 'Failed to install DCGM exporter');
+        }
+
+        // Create RuntimeClass for NVIDIA (required for pods to use NVIDIA container runtime)
+        try {
+            const runtimeClassYaml = `
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+handler: nvidia
+`;
+            execSync('kubectl apply -f -', {
+                input: runtimeClassYaml,
+                stdio: ['pipe', 'inherit', 'inherit']
+            });
+            logger.info('RuntimeClass "nvidia" created.');
+        } catch (e) {
+            logger.error(e, 'Failed to create NVIDIA RuntimeClass');
+        }
+    }
 }

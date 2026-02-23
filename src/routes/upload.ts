@@ -7,6 +7,8 @@ import { execSync } from 'child_process';
 import logger from '../logger';
 import {
   AgentManifest,
+  AgentManifestV2,
+  isV2Manifest,
   generateAgentDockerfile,
   generateAgidentityDockerfile,
   generateFrontendDockerfile,
@@ -14,6 +16,7 @@ import {
 } from '../utils';
 import { findBalanceForKey, fundKey } from '../utils/wallet';
 import { sendDeploymentFailureEmail } from '../utils/email';
+import { refreshAdvertisement } from '../utils/registry';
 
 const projectsDomain: string = process.env.PROJECT_DEPLOYMENT_DNS_NAME!;
 
@@ -105,13 +108,53 @@ export default async (req: Request, res: Response) => {
       return res.status(400).json({ error: errMsg });
     }
 
-    const manifest: AgentManifest = JSON.parse(
+    const rawManifest = JSON.parse(
       fs.readFileSync(manifestPath, 'utf-8')
     );
-    if (manifest.schema !== 'mandala-agent') {
+    if (rawManifest.schema !== 'mandala-agent') {
       const errMsg = 'Invalid schema in agent-manifest.json (expected "mandala-agent")';
       await logStep(errMsg, 'error');
       return res.status(400).json({ error: errMsg });
+    }
+
+    // 8b) Detect v2 manifest and extract service definition
+    let manifest: AgentManifest;
+    let serviceName: string | undefined;
+
+    if (isV2Manifest(rawManifest)) {
+      serviceName = req.query.serviceName as string || req.headers['x-mandala-service'] as string;
+      if (!serviceName || !rawManifest.services[serviceName]) {
+        const errMsg = 'v2 manifest requires serviceName param identifying which service to deploy';
+        await logStep(errMsg, 'error');
+        return res.status(400).json({ error: errMsg });
+      }
+      const svc = rawManifest.services[serviceName];
+      manifest = {
+        schema: 'mandala-agent',
+        schemaVersion: '1.0',
+        agent: svc.agent,
+        env: { ...(rawManifest.env || {}), ...(svc.env || {}) },
+        resources: svc.resources,
+        ports: svc.ports,
+        healthCheck: svc.healthCheck,
+        frontend: svc.frontend || undefined,
+        storage: svc.storage,
+        databases: svc.databases,
+        deployments: rawManifest.deployments?.map(d => ({
+          provider: d.provider,
+          projectID: d.projectID,
+          network: d.network,
+          MandalaCloudURL: d.MandalaCloudURL
+        }))
+      };
+      await logStep(`v2 manifest detected, deploying service: ${serviceName}`);
+    } else {
+      manifest = rawManifest as AgentManifest;
+    }
+
+    // 8c) Reject GPU requests on non-GPU nodes
+    if (manifest.resources?.gpu && process.env.GPU_ENABLED !== 'true') {
+      return res.status(400).json({ error: 'This node does not support GPU workloads.' });
     }
 
     // 9) Check for matching Mandala deployment config
@@ -129,6 +172,11 @@ export default async (req: Request, res: Response) => {
       const errMsg = `Network mismatch: Project is on ${project.network} but deployment config specifies ${deployConfig.network}`;
       await logStep(errMsg, 'error');
       return res.status(400).json({ error: errMsg });
+    }
+
+    // 9b) Store service_name on deploy record if v2
+    if (serviceName) {
+      await db('deploys').where({ id: deploy.id }).update({ service_name: serviceName });
     }
 
     // 10) Build/push Docker images
@@ -343,18 +391,15 @@ description: A chart to deploy a Mandala project
           requests:
             cpu: 100m`;
     if (manifest.resources) {
+      const gpuLine = manifest.resources.gpu ? `\n            nvidia.com/gpu: ${manifest.resources.gpu}` : '';
       resourcesYaml = `
         resources:
           requests:
             cpu: ${manifest.resources.cpu || '100m'}
-            memory: ${manifest.resources.memory || '128Mi'}
+            memory: ${manifest.resources.memory || '128Mi'}${gpuLine}
           limits:
             cpu: ${manifest.resources.cpu || '1000m'}
-            memory: ${manifest.resources.memory || '512Mi'}`;
-      if (manifest.resources.gpu) {
-        resourcesYaml += `
-            nvidia.com/gpu: ${manifest.resources.gpu}`;
-      }
+            memory: ${manifest.resources.memory || '512Mi'}${gpuLine}`;
     }
 
     // Agent container ports
@@ -374,6 +419,17 @@ description: A chart to deploy a Mandala project
       - name: agent-data
         persistentVolumeClaim:
           claimName: {{ include "mandala-project.fullname" . }}-agent-pvc`;
+    }
+
+    // GPU scheduling: runtimeClassName + tolerations
+    let gpuSchedulingYaml = '';
+    if (manifest.resources?.gpu) {
+      gpuSchedulingYaml = `
+      runtimeClassName: nvidia
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule`;
     }
 
     //
@@ -396,7 +452,7 @@ spec:
     metadata:
       labels:
         app: {{ include "mandala-project.fullname" . }}
-    spec:
+    spec:${gpuSchedulingYaml}
       containers:
       {{- if .Values.agentImage }}
       - name: agent
@@ -418,8 +474,9 @@ ${containerPortsYaml}${livenessProbe}${readinessProbe}${resourcesYaml}${agentVol
     );
 
     //
-    // 13b) HorizontalPodAutoscaler
+    // 13b) HorizontalPodAutoscaler (disabled for GPU workloads — GPUs are discrete, non-overcommittable)
     //
+    const hpaMaxReplicas = manifest.resources?.gpu ? 1 : 10;
     fs.writeFileSync(
       path.join(helmDir, 'templates', 'hpa.yaml'),
       `apiVersion: autoscaling/v2
@@ -429,7 +486,7 @@ metadata:
   labels:
     app: {{ include "mandala-project.fullname" . }}
 spec:
-  maxReplicas: 10
+  maxReplicas: ${hpaMaxReplicas}
   metrics:
   - resource:
       name: cpu
@@ -878,6 +935,9 @@ spec:
     // 15) Wait for the main deployment to roll out
     runCmd(`kubectl rollout status deployment/${helmReleaseName}-deployment -n ${namespace}`);
     await logStep(`Project ${project.project_uuid}, release ${deploymentId} rolled out successfully.`);
+
+    // 15b) Refresh overlay advertisement — resource availability changed
+    await refreshAdvertisement();
 
     // Log final URLs
     if (manifest.frontend) {

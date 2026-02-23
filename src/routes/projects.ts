@@ -7,6 +7,7 @@ import { execSync } from 'child_process';
 import dns from 'dns/promises';
 import { sendAdminNotificationEmail, sendWelcomeEmail, sendDomainChangeEmail } from '../utils/email';
 import { enableIngress } from '../utils/ingress';
+import { refreshAdvertisement } from '../utils/registry';
 
 const router = Router();
 
@@ -511,6 +512,20 @@ router.post('/:projectId/info', requireRegisteredUser, requireProject, requirePr
 
         const agentConfig = project.agent_config ? JSON.parse(project.agent_config) : null;
 
+        // Parse service links if present
+        let serviceLinks: any = null;
+        try {
+            serviceLinks = project.service_links ? JSON.parse(project.service_links) : null;
+        } catch { /* ignore */ }
+
+        // Get latest deploy's service_name if any
+        const { db: dbInfo }: { db: Knex } = req as any;
+        const latestDeploy = await dbInfo('deploys')
+            .where({ project_id: project.id })
+            .orderBy('created_at', 'desc')
+            .first();
+        const serviceName = latestDeploy?.service_name || null;
+
         res.json({
             id: project.project_uuid,
             name: project.name,
@@ -520,7 +535,9 @@ router.post('/:projectId/info', requireRegisteredUser, requireProject, requirePr
             sslEnabled: status.domains.ssl,
             customDomains,
             agentConfig,
-            requiresBlockchainFunding: project.requires_blockchain_funding
+            requiresBlockchainFunding: project.requires_blockchain_funding,
+            serviceName,
+            serviceLinks
         });
     } catch (error: any) {
         logger.error({ error: error.message }, 'Error getting project info');
@@ -581,6 +598,9 @@ Mandala Network`;
     await db('project_admins').where({ project_id: project.id }).del();
     await db('logs').where({ project_id: project.id }).del();
     await db('projects').where({ id: project.id }).del();
+
+    // Refresh overlay advertisement — resources freed
+    await refreshAdvertisement();
 
     res.json({ message: 'Project deleted' });
 });
@@ -900,6 +920,32 @@ router.post('/:projectId/admin/status', requireRegisteredUser, requireProject, r
         logger.error({ error: error.message }, 'Error getting agent status');
         res.status(500).json({ error: 'Failed to get agent status' });
     }
+});
+
+/**
+ * Store service link metadata on a project.
+ * Used by CLI during multi-service deploy to record how services are wired together.
+ * @body { links: { envVar: string, url: string }[] }
+ */
+router.post('/:projectId/service-links', requireRegisteredUser, requireProject, requireProjectAdmin, async (req: Request, res: Response) => {
+    const { db }: { db: Knex } = req as any;
+    const project = (req as any).project;
+    const { links } = req.body;
+
+    if (!Array.isArray(links)) {
+        return res.status(400).json({ error: 'links must be an array of { envVar, url }' });
+    }
+
+    await db('projects').where({ id: project.id }).update({
+        service_links: JSON.stringify(links)
+    });
+
+    await db('logs').insert({
+        project_id: project.id,
+        message: `Service links updated: ${links.map(l => l.envVar).join(', ')}`
+    });
+
+    res.json({ message: 'Service links stored', links });
 });
 
 /**

@@ -175,10 +175,28 @@ const envVars: EnvVarDefinition[] = [
     },
     {
         key: 'CERT_ISSUANCE_EMAIL',
-        description: 'Email address used for certificate issuance (e.g., ACME/Let’s Encrypt).',
+        description: 'Email address used for certificate issuance (e.g., ACME/Let's Encrypt).',
         default: 'your@email.domain',
         validate: (val) => val.includes('@'),
-    }
+    },
+    {
+        key: 'GPU_ENABLED',
+        description: 'Enable GPU hosting on this node (requires NVIDIA drivers + container toolkit on host).',
+        default: 'false',
+        validate: (val) => val === 'true' || val === 'false',
+    },
+    {
+        key: 'GPU_RATE_PER_UNIT_5MIN',
+        description: 'Billing rate in satoshis per GPU per 5-minute interval.',
+        default: '5000',
+        validate: (val) => !isNaN(Number(val)) && Number(val) >= 0,
+    },
+    {
+        key: 'GPU_TYPE',
+        description: 'GPU model name reported to deployers (e.g. "NVIDIA A100 80GB").',
+        default: '',
+        validate: () => true,
+    },
 ];
 
 // Load existing env values if present
