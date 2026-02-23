@@ -20,6 +20,7 @@ services:
   mandala-node:
     build: .
     container_name: mandala-node
+    privileged: true
     ports:
       - "7777:7777"
     extra_hosts:

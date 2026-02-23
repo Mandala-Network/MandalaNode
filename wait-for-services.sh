@@ -20,6 +20,18 @@ while ! nc -z $host2 $port2; do
 done
 echo "$host2:$port2 is up"
 
+echo "Waiting for /kubeconfig/kubeconfig.yaml to be created..."
+while [ ! -f /kubeconfig/kubeconfig.yaml ]; do
+  sleep 1
+done
+echo "kubeconfig.yaml found"
+
+# Wait until the file has content (k3s may create it empty first)
+while [ ! -s /kubeconfig/kubeconfig.yaml ]; do
+  sleep 1
+done
+echo "kubeconfig.yaml has content"
+
 sleep 1
 sed -i 's/https:\/\/127.0.0.1:6443/https:\/\/mandala-k3s:6443/g' /kubeconfig/kubeconfig.yaml
 

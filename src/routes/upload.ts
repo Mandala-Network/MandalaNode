@@ -39,10 +39,13 @@ export default async (req: Request, res: Response) => {
   // Helper to run commands with error handling
   function runCmd(cmd: string, options: any = {}) {
     try {
-      execSync(cmd, { stdio: 'inherit', ...options });
+      const output = execSync(cmd, { stdio: 'pipe', encoding: 'utf-8', ...options });
+      if (output) logger.info({ cmd: cmd.substring(0, 80) }, output.substring(0, 2000));
     } catch (err: any) {
-      console.error(err);
-      throw new Error(`Command failed (${cmd}): ${err.message}`);
+      const stderr = err.stderr ? String(err.stderr).substring(0, 3000) : '';
+      const stdout = err.stdout ? String(err.stdout).substring(0, 3000) : '';
+      logger.error({ cmd, stderr, stdout }, `Command failed: ${cmd}`);
+      throw new Error(`Command failed (${cmd}): ${stderr || stdout || err.message}`);
     }
   }
 
@@ -156,7 +159,7 @@ export default async (req: Request, res: Response) => {
         // AGIdentity agent — use specialized Dockerfile
         fs.writeFileSync(
           path.join(buildDir, 'Dockerfile'),
-          generateAgidentityDockerfile(manifest)
+          generateAgidentityDockerfile(manifest, buildDir)
         );
       } else if (manifest.agent.dockerfile) {
         // User-provided Dockerfile

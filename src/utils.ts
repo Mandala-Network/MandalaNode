@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 
 /**
@@ -76,17 +77,30 @@ EXPOSE 80`;
  * generateAgidentityDockerfile:
  * Produces a Dockerfile for AGIdentity agent containers.
  */
-export function generateAgidentityDockerfile(manifest: AgentManifest): string {
+export function generateAgidentityDockerfile(manifest: AgentManifest, buildDir?: string): string {
   const ports = manifest.ports || [3000];
   const exposeStatements = ports.map(p => `EXPOSE ${p}`).join('\n');
+
+  // Only COPY mpc/ if the directory exists in the build context
+  let copyMpc = '';
+  if (buildDir && fs.existsSync(path.join(buildDir, 'mpc'))) {
+    copyMpc = 'COPY mpc/ ./mpc/';
+  }
+
+  // Only COPY workspace/ if the directory exists in the build context
+  let copyWorkspace = '';
+  if (buildDir && fs.existsSync(path.join(buildDir, 'workspace'))) {
+    copyWorkspace = 'COPY workspace/ ./workspace/';
+  }
+
   return `FROM docker.io/node:22-slim
 RUN apt-get update && apt-get install -y build-essential python3 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package*.json tsconfig.json ./
-COPY mpc/ ./mpc/
+${copyMpc}
 RUN npm install --production=false
 COPY src/ ./src/
-COPY workspace/ ./workspace/ 2>/dev/null || true
+${copyWorkspace}
 RUN npm run build
 ENV NODE_ENV=production
 ENV AUTH_SERVER_PORT=3000
