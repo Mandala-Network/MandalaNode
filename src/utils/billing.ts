@@ -3,7 +3,6 @@ import { sendThresholdEmail } from './email';
 import axios from 'axios';
 import db from '../db';
 import { disableIngress, enableIngress } from './ingress';
-import { refreshAdvertisement } from './registry';
 
 // Configurable billing rates (default values as before)
 const CPU_RATE_PER_CORE_5MIN = parseInt(process.env.CPU_RATE_PER_CORE_5MIN || "1000", 10);
@@ -179,8 +178,9 @@ export async function billProjects() {
                     // });
                     // logger.info({ project_uuid: project.project_uuid }, 'Ingress disabled due to negative balance');
 
-                    // When ingress is disabled and pods scaled down, resources are freed
-                    await refreshAdvertisement();
+                    // NOTE: refreshAdvertisement() should be called here once ingress
+                    // disabling is re-enabled above (resources freed → update overlay ad).
+                    // Currently no-op since ingress stays up.
                 }
             }
 

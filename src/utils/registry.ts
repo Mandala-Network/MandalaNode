@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import logger from '../logger';
 
 let currentWallet: WalletInterface | null = null;
+let publishInProgress = false;
 
 /**
  * Initialize the registry module with the node's mainnet wallet.
@@ -159,11 +160,18 @@ export async function publishNodeAdvertisement(wallet: WalletInterface): Promise
 export async function refreshAdvertisement(): Promise<void> {
   if (process.env.REGISTRY_ENABLED === 'false') return;
   if (!currentWallet) return;
+  if (publishInProgress) {
+    logger.debug('Advertisement publish already in progress, skipping');
+    return;
+  }
 
+  publishInProgress = true;
   try {
     await publishNodeAdvertisement(currentWallet);
     logger.info('Refreshed node advertisement (resource change)');
   } catch (e) {
     logger.error(e, 'Failed to refresh node advertisement');
+  } finally {
+    publishInProgress = false;
   }
 }

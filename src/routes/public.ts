@@ -20,56 +20,19 @@ export default async (_, res) => {
     const mainnetPubKey = await mainnetWallet.getPublicKey({ identityKey: true });
     const testnetPubKey = await testnetWallet.getPublicKey({ identityKey: true });
 
-    // GPU availability info
+    // Query K8s nodes once for all capability/GPU info
     let gpuInfo: any = { enabled: false };
-    if (gpuEnabled) {
-        let totalGpus = 0;
-        let availableGpus = 0;
-        try {
-            const nodesJson = execSync('kubectl get nodes -o json', { encoding: 'utf-8' });
-            const nodes = JSON.parse(nodesJson);
-            for (const node of nodes.items) {
-                const allocatable = node.status?.allocatable?.['nvidia.com/gpu'];
-                if (allocatable) {
-                    totalGpus += parseInt(allocatable, 10);
-                }
-            }
-            // Available = allocatable minus currently requested
-            try {
-                const podsJson = execSync('kubectl get pods --all-namespaces -o json', { encoding: 'utf-8' });
-                const pods = JSON.parse(podsJson);
-                let usedGpus = 0;
-                for (const pod of pods.items) {
-                    if (pod.status?.phase !== 'Running' && pod.status?.phase !== 'Pending') continue;
-                    for (const container of (pod.spec?.containers || [])) {
-                        const gpuReq = container.resources?.requests?.['nvidia.com/gpu'];
-                        if (gpuReq) usedGpus += parseInt(gpuReq, 10);
-                    }
-                }
-                availableGpus = Math.max(0, totalGpus - usedGpus);
-            } catch {
-                availableGpus = totalGpus;
-            }
-        } catch {
-            // K8s query failed, report 0
-        }
-        gpuInfo = {
-            enabled: true,
-            type: gpuType,
-            total: totalGpus,
-            available: availableGpus,
-            rate_per_unit_5min: gpuRate
-        };
-    }
-
-    // Node capabilities from kubectl
     let maxCpu = 'unknown';
     let maxMemory = 'unknown';
+
     try {
         const nodesJson = execSync('kubectl get nodes -o json', { encoding: 'utf-8' });
         const nodes = JSON.parse(nodesJson);
+
+        let totalGpus = 0;
         let totalCpuMillis = 0;
         let totalMemBytes = 0;
+
         for (const node of nodes.items) {
             const cpu = node.status?.allocatable?.cpu;
             const mem = node.status?.allocatable?.memory;
@@ -82,9 +45,38 @@ export default async (_, res) => {
                 else if (mem.endsWith('Gi')) totalMemBytes += parseInt(mem) * 1024 * 1024 * 1024;
                 else totalMemBytes += parseInt(mem);
             }
+            if (gpuEnabled) {
+                const allocatable = node.status?.allocatable?.['nvidia.com/gpu'];
+                if (allocatable) totalGpus += parseInt(allocatable, 10);
+            }
         }
+
         maxCpu = `${totalCpuMillis}m`;
         maxMemory = `${Math.round(totalMemBytes / (1024 * 1024 * 1024))}Gi`;
+
+        if (gpuEnabled) {
+            let usedGpus = 0;
+            try {
+                const podsJson = execSync('kubectl get pods --all-namespaces -o json', { encoding: 'utf-8' });
+                const pods = JSON.parse(podsJson);
+                for (const pod of pods.items) {
+                    if (pod.status?.phase !== 'Running' && pod.status?.phase !== 'Pending') continue;
+                    for (const container of (pod.spec?.containers || [])) {
+                        const gpuReq = container.resources?.requests?.['nvidia.com/gpu'];
+                        if (gpuReq) usedGpus += parseInt(gpuReq, 10);
+                    }
+                }
+            } catch {
+                // pod query failed, assume all GPUs available
+            }
+            gpuInfo = {
+                enabled: true,
+                type: gpuType,
+                total: totalGpus,
+                available: Math.max(0, totalGpus - usedGpus),
+                rate_per_unit_5min: gpuRate
+            };
+        }
     } catch {
         // K8s query failed
     }
