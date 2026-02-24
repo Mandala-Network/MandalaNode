@@ -16,7 +16,7 @@ export interface AgentManifest {
     runtime?: 'node' | 'python' | 'docker'
   }
   env?: Record<string, string>
-  resources?: { cpu?: string; memory?: string; gpu?: string }
+  resources?: { cpu?: string; memory?: string; gpu?: string; tee?: boolean; teeInferenceProxy?: boolean }
   ports?: number[]           // default [8080]
   healthCheck?: { path: string; port?: number; intervalSeconds?: number }
   frontend?: { directory?: string; image?: string }
@@ -36,7 +36,7 @@ export interface ServiceDefinition {
     runtime?: 'node' | 'python' | 'docker';
   };
   env?: Record<string, string>;
-  resources?: { cpu?: string; memory?: string; gpu?: string };
+  resources?: { cpu?: string; memory?: string; gpu?: string; tee?: boolean; teeInferenceProxy?: boolean };
   ports?: number[];
   healthCheck?: { path: string; port?: number; intervalSeconds?: number };
   frontend?: { directory?: string; image?: string } | null;
@@ -60,6 +60,8 @@ export interface DeploymentTarget {
   capabilities?: {
     gpu?: boolean;
     gpuType?: string;
+    tee?: boolean;
+    teeTechnology?: string;
   };
 }
 

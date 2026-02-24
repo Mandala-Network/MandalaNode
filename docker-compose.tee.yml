@@ -1,0 +1,7 @@
+services:
+  k3s-server:
+    devices:
+      - /dev/tdx-guest:/dev/tdx-guest
+    environment:
+      TEE_ENABLED: "true"
+      TEE_TECHNOLOGY: "tdx"

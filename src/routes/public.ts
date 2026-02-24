@@ -13,6 +13,9 @@ export default async (_, res) => {
     const gpuEnabled = process.env.GPU_ENABLED === 'true';
     const gpuType = process.env.GPU_TYPE || '';
     const gpuRate = parseInt(process.env.GPU_RATE_PER_UNIT_5MIN || "5000", 10);
+    const teeEnabled = process.env.TEE_ENABLED === 'true';
+    const teeTechnology = process.env.TEE_TECHNOLOGY || 'tdx';
+    const teeRate = parseInt(process.env.TEE_RATE_PER_VM_5MIN || "3000", 10);
 
     const mainnetWallet = new ProtoWallet(new PrivateKey(mainnetKey, 16));
     const testnetWallet = new ProtoWallet(new PrivateKey(testnetKey, 16));
@@ -81,6 +84,25 @@ export default async (_, res) => {
         // K8s query failed
     }
 
+    // Build TEE info
+    let teeInfo: any = { enabled: false };
+    if (teeEnabled) {
+        let attestationTxid: string | null = null;
+        try {
+            const db = require('../db').default;
+            const attestation = await db('tee_attestations').where({ is_current: true }).first();
+            if (attestation) attestationTxid = attestation.attestation_txid;
+        } catch {
+            // DB query failed
+        }
+        teeInfo = {
+            enabled: true,
+            technology: teeTechnology,
+            attestationTxid,
+            rate_per_vm_5min: teeRate,
+        };
+    }
+
     res.json({
         network: 'mandala',
         platform: 'mandala-network-node',
@@ -95,7 +117,8 @@ export default async (_, res) => {
         capabilities: {
             maxCpu,
             maxMemory,
-            gpu: gpuInfo
+            gpu: gpuInfo,
+            tee: teeInfo,
         },
         pricing: {
             currency: 'BSV satoshis',
@@ -104,9 +127,11 @@ export default async (_, res) => {
             mem_rate_per_gb: memRate,
             disk_rate_per_gb: diskRate,
             net_rate_per_gb: netRate,
-            ...(gpuEnabled ? { gpu_rate_per_unit: gpuRate } : {})
+            ...(gpuEnabled ? { gpu_rate_per_unit: gpuRate } : {}),
+            ...(teeEnabled ? { tee_rate_per_vm: teeRate } : {})
         },
         gpu: gpuInfo,
+        tee: teeInfo,
         projectDeploymentDomain: projectDomain
     });
 }

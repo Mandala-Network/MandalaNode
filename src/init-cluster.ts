@@ -186,4 +186,110 @@ handler: nvidia
             logger.error(e, 'Failed to create NVIDIA RuntimeClass');
         }
     }
+
+    // Conditionally install TEE (Confidential Computing) infrastructure
+    if (process.env.TEE_ENABLED === 'true') {
+        logger.info('TEE_ENABLED=true — installing TEE infrastructure...');
+        const teeTechnology = process.env.TEE_TECHNOLOGY || 'tdx';
+
+        // Install Confidential Containers operator
+        try {
+            execSync('helm repo add confidential-containers https://confidential-containers.github.io/operator', { stdio: 'inherit' });
+            execSync('helm repo update', { stdio: 'inherit' });
+            execSync('helm upgrade --install cc-operator confidential-containers/cc-operator --namespace confidential-containers-system --create-namespace', { stdio: 'inherit' });
+            logger.info('Confidential Containers operator installed.');
+        } catch (e) {
+            logger.error(e, 'Failed to install Confidential Containers operator');
+        }
+
+        // Create RuntimeClass for kata-cc-tdx
+        try {
+            const runtimeClassYaml = `
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata-cc-tdx
+handler: kata-cc-tdx
+scheduling:
+  nodeSelector:
+    node.kubernetes.io/tee: "${teeTechnology}"
+`;
+            execSync('kubectl apply -f -', {
+                input: runtimeClassYaml,
+                stdio: ['pipe', 'inherit', 'inherit']
+            });
+            logger.info('RuntimeClass "kata-cc-tdx" created.');
+        } catch (e) {
+            logger.error(e, 'Failed to create kata-cc-tdx RuntimeClass');
+        }
+
+        // Label TEE-capable nodes (if node labels aren't already set externally)
+        try {
+            const nodesJson = execSync('kubectl get nodes -o json', { encoding: 'utf-8' });
+            const nodes = JSON.parse(nodesJson);
+            for (const node of nodes.items) {
+                const nodeName = node.metadata?.name;
+                const existing = node.metadata?.labels?.['node.kubernetes.io/tee'];
+                if (!existing && nodeName) {
+                    // Check if the node has /dev/tdx-guest (TDX) via node info
+                    // In production, nodes should be pre-labeled; this is a best-effort fallback
+                    logger.debug(`Node ${nodeName} does not have TEE label, skipping auto-label`);
+                }
+            }
+        } catch (e) {
+            logger.warn('Could not check node TEE labels');
+        }
+
+        // Deploy tappd DaemonSet to mandala-global namespace
+        try {
+            const tappdDaemonSetYaml = `
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tappd
+  namespace: mandala-global
+  labels:
+    app: tappd
+spec:
+  selector:
+    matchLabels:
+      app: tappd
+  template:
+    metadata:
+      labels:
+        app: tappd
+    spec:
+      hostNetwork: true
+      nodeSelector:
+        node.kubernetes.io/tee: "${teeTechnology}"
+      tolerations:
+      - key: node.kubernetes.io/tee
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: tappd
+        image: ghcr.io/aspect-build/dstack-tappd:latest
+        securityContext:
+          privileged: true
+        ports:
+        - containerPort: 8090
+          hostPort: 8090
+        volumeMounts:
+        - name: tdx-guest
+          mountPath: /dev/tdx-guest
+      volumes:
+      - name: tdx-guest
+        hostPath:
+          path: /dev/tdx-guest
+          type: CharDevice
+`;
+            execSync('kubectl apply -f -', {
+                input: tappdDaemonSetYaml,
+                stdio: ['pipe', 'inherit', 'inherit']
+            });
+            logger.info('tappd DaemonSet deployed to mandala-global namespace.');
+        } catch (e) {
+            logger.error(e, 'Failed to deploy tappd DaemonSet');
+        }
+    }
 }

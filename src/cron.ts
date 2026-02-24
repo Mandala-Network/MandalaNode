@@ -7,6 +7,9 @@ import { billProjects } from './utils/billing';
 import { publishNodeAdvertisement } from './utils/registry';
 import { WalletInterface } from '@bsv/sdk';
 
+const TEE_ENABLED = process.env.TEE_ENABLED === 'true';
+const ATTESTATION_MAX_AGE_HOURS = 6;
+
 export function startCronJobs(db: Knex, mainnetWallet: WalletInterface, testnetWallet: WalletInterface) {
     // Check project keys every 5 minutes
     new CronJob(
@@ -43,6 +46,38 @@ export function startCronJobs(db: Knex, mainnetWallet: WalletInterface, testnetW
                     logger.info('Published node advertisement to overlay');
                 } catch (e) {
                     logger.error(e, 'Failed to publish node advertisement');
+                }
+            },
+            null,
+            true
+        );
+    }
+
+    // Check TEE attestation freshness every 6 hours
+    if (TEE_ENABLED) {
+        new CronJob(
+            '0 */6 * * *',
+            async () => {
+                try {
+                    const currentAttestation = await db('tee_attestations')
+                        .where({ is_current: true })
+                        .first();
+                    if (currentAttestation) {
+                        const attestedAt = new Date(currentAttestation.attested_at);
+                        const ageHours = (Date.now() - attestedAt.getTime()) / (1000 * 60 * 60);
+                        if (ageHours > ATTESTATION_MAX_AGE_HOURS) {
+                            logger.warn(
+                                { attestationTxid: currentAttestation.attestation_txid, ageHours: Math.round(ageHours) },
+                                'TEE attestation is stale — CVM proxy should re-attest'
+                            );
+                            // The CVM proxy handles re-attestation itself since it owns the TEE key
+                            // and has direct access to tappd. We just log the staleness here.
+                        }
+                    } else {
+                        logger.warn('No current TEE attestation found');
+                    }
+                } catch (e) {
+                    logger.error(e, 'Error checking TEE attestation freshness');
                 }
             },
             null,

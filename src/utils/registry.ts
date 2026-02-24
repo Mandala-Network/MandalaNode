@@ -59,11 +59,26 @@ export async function publishNodeAdvertisement(wallet: WalletInterface): Promise
   const gpuEnabled = process.env.GPU_ENABLED === 'true';
   const gpuInfo = gpuEnabled ? getGpuInfo() : { total: 0, available: 0 };
 
+  const teeEnabled = process.env.TEE_ENABLED === 'true';
+  let latestAttestationTxid: string | undefined;
+  if (teeEnabled) {
+    try {
+      const db = require('../db').default;
+      const attestation = await db('tee_attestations').where({ is_current: true }).first();
+      if (attestation) latestAttestationTxid = attestation.attestation_txid;
+    } catch {
+      // DB not ready yet
+    }
+  }
+
   const capabilities = {
     gpu: gpuEnabled,
     gpuType: process.env.GPU_TYPE || undefined,
     gpuTotal: gpuInfo.total,
     gpuAvailable: gpuInfo.available,
+    tee: teeEnabled,
+    teeTechnology: teeEnabled ? (process.env.TEE_TECHNOLOGY || 'tdx') : undefined,
+    teeAttestationTxid: latestAttestationTxid,
     supportedAgentTypes: ['agidentity', 'openclaw', 'custom'],
     supportedRuntimes: ['node', 'python', 'docker'],
   };

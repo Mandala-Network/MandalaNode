@@ -79,6 +79,20 @@ async function main() {
     // Public queries are also not authenticated
     app.get('/api/v1/public', publicRoute)
 
+    // Public TEE endpoints (no auth required for status and attestation queries)
+    app.get('/api/v1/tee/status', (req, res, next) => {
+        const teeRouter = require('./routes/tee').default;
+        teeRouter.handle(req, res, next);
+    });
+    app.get('/api/v1/tee/attestation/current', (req, res, next) => {
+        const teeRouter = require('./routes/tee').default;
+        teeRouter.handle(req, res, next);
+    });
+    app.get('/api/v1/tee/attestation/:txid', (req, res, next) => {
+        const teeRouter = require('./routes/tee').default;
+        teeRouter.handle(req, res, next);
+    });
+
     // Logging middleware
     app.use((req, res, next) => {
         const startTime = Date.now();

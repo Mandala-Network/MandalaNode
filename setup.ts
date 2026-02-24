@@ -197,6 +197,24 @@ const envVars: EnvVarDefinition[] = [
         default: '',
         validate: () => true,
     },
+    {
+        key: 'TEE_ENABLED',
+        description: 'Enable TEE (Trusted Execution Environment) hosting on this node (requires Intel TDX or AMD SEV-SNP).',
+        default: 'false',
+        validate: (val) => val === 'true' || val === 'false',
+    },
+    {
+        key: 'TEE_TECHNOLOGY',
+        description: 'TEE technology available on this node.',
+        default: 'tdx',
+        validate: (val) => val === 'tdx' || val === 'sev-snp',
+    },
+    {
+        key: 'TEE_RATE_PER_VM_5MIN',
+        description: 'Billing rate in satoshis per TEE CVM per 5-minute interval.',
+        default: '3000',
+        validate: (val) => !isNaN(Number(val)) && Number(val) >= 0,
+    },
 ];
 
 // Load existing env values if present

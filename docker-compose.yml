@@ -46,6 +46,9 @@ services:
       GPU_ENABLED: ${GPU_ENABLED:-false}
       GPU_RATE_PER_UNIT_5MIN: ${GPU_RATE_PER_UNIT_5MIN:-5000}
       GPU_TYPE: ${GPU_TYPE:-}
+      TEE_ENABLED: ${TEE_ENABLED:-false}
+      TEE_TECHNOLOGY: ${TEE_TECHNOLOGY:-tdx}
+      TEE_RATE_PER_VM_5MIN: ${TEE_RATE_PER_VM_5MIN:-3000}
     depends_on:
       - mysql
     volumes:

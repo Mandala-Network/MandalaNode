@@ -157,6 +157,11 @@ export default async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'This node does not support GPU workloads.' });
     }
 
+    // 8d) Reject TEE requests on non-TEE nodes
+    if (manifest.resources?.tee && process.env.TEE_ENABLED !== 'true') {
+      return res.status(400).json({ error: 'This node does not support TEE workloads.' });
+    }
+
     // 9) Check for matching Mandala deployment config
     const deployConfig = manifest.deployments?.find(
       (d) => d.provider === 'mandala' && d.projectID === project.project_uuid
@@ -432,6 +437,49 @@ description: A chart to deploy a Mandala project
         effect: NoSchedule`;
     }
 
+    // TEE scheduling: runtimeClassName + nodeSelector (overrides GPU if both set)
+    if (manifest.resources?.tee) {
+      const teeTech = process.env.TEE_TECHNOLOGY || 'tdx';
+      gpuSchedulingYaml = `
+      runtimeClassName: kata-cc-tdx
+      nodeSelector:
+        node.kubernetes.io/tee: "${teeTech}"
+      tolerations:
+      - key: node.kubernetes.io/tee
+        operator: Exists
+        effect: NoSchedule`;
+    }
+
+    // TEE inference proxy sidecar container
+    let teeProxySidecarYaml = '';
+    if (manifest.resources?.tee && manifest.resources?.teeInferenceProxy) {
+      const nodeIdentityKey = (await wallet.getPublicKey({ identityKey: true })).publicKey;
+      const bsvChain = project.network === 'testnet' ? 'test' : 'main';
+      teeProxySidecarYaml = `
+      - name: tee-inference-proxy
+        image: agidentity/vllm-proxy-bsv:latest
+        env:
+        - name: VLLM_BACKEND_URL
+          value: "http://localhost:${agentPorts[0]}"
+        - name: BSV_CHAIN
+          value: "${bsvChain}"
+        - name: NODE_IDENTITY_KEY
+          value: "${nodeIdentityKey}"
+        - name: TAPPD_URL
+          value: "http://localhost:8090"
+        - name: MANDALA_NODE_CALLBACK_URL
+          value: "${process.env.MANDALA_NODE_SERVER_BASEURL}/api/v1/tee/fund-proxy"
+        ports:
+        - containerPort: 8443
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi`;
+    }
+
     //
     // 13a) Main Deployment
     //
@@ -469,14 +517,14 @@ ${containerPortsYaml}${livenessProbe}${readinessProbe}${resourcesYaml}${agentVol
         resources:
           requests:
             cpu: 100m
-      {{- end }}${agentVolume}
+      {{- end }}${teeProxySidecarYaml}${agentVolume}
 `
     );
 
     //
-    // 13b) HorizontalPodAutoscaler (disabled for GPU workloads — GPUs are discrete, non-overcommittable)
+    // 13b) HorizontalPodAutoscaler (disabled for GPU/TEE workloads — discrete, non-overcommittable)
     //
-    const hpaMaxReplicas = manifest.resources?.gpu ? 1 : 10;
+    const hpaMaxReplicas = (manifest.resources?.gpu || manifest.resources?.tee) ? 1 : 10;
     fs.writeFileSync(
       path.join(helmDir, 'templates', 'hpa.yaml'),
       `apiVersion: autoscaling/v2

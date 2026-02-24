@@ -1,0 +1,13 @@
+{
+    "name": "@bsv/mandala-tee",
+    "version": "0.1.0",
+    "description": "TEE attestation and verification for Mandala Network Node",
+    "main": "src/index.ts",
+    "scripts": {},
+    "dependencies": {
+        "@bsv/sdk": "^2.0.1"
+    },
+    "devDependencies": {
+        "typescript": "^5.2.2"
+    }
+}
